@@ -14,7 +14,7 @@ async function bootstrap() {
     }),
   );
   app.enableCors({
-    origin: ['https://cbmnp-frontend-nu.vercel.app', 'http://localhost:3000','http://localhost:3001'],
+    origin: ['https://cbmnp-frontend-nu.vercel.app', 'http://localhost:3000','http://localhost:3001','https://www.nonggor.com'],
     methods: ['GET', 'HEAD', 'PUT', 'POST', 'DELETE', 'OPTIONS', 'PATCH'],
     credentials: true,
     allowedHeaders: [
