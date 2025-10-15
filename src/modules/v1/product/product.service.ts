@@ -1,4 +1,4 @@
-import { HttpStatus, Injectable } from '@nestjs/common';
+import { BadRequestException, HttpStatus, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 import { Product } from './entity/product.entity';
@@ -126,7 +126,7 @@ export class ProductService {
   // 🚀 Execute query
   const [data, total] = await queryBuilder.getManyAndCount();
   const modifyData = plainToInstance(Product, data);
-
+  // console.log(modifyData,"abce");
   return {
     data: modifyData,
     total,
@@ -276,5 +276,42 @@ export class ProductService {
     };
 
     deleteImage();
+  }
+   async deleteProductById(id: string) {
+    // 1. Check if product exists
+    const product = await this.productRepository.findOne({
+      where: { id },
+      relations: ['images', 'attributes', 'inventoryItems', 'variants'],
+    });
+
+    if (!product) {
+      throw new NotFoundException(`Product with id ${id} not found`);
+    }
+
+    // 2. Delete product images from external service
+    if (product.images && product.images.length > 0) {
+      for (const image of product.images) {
+        try {
+          if (image.delete_url) {
+            await axios.get(image.delete_url); // delete image from external service
+            console.log(`Deleted image: ${image.url}`);
+          }
+        } catch (err) {
+          console.error(`Failed to delete image ${image.url}:`, err.message);
+        }
+      }
+
+      // Remove images from DB
+      await this.productImageRepository.delete({ productId: product.id });
+    }
+
+    // 3. Delete product (cascades will handle attributes, inventoryItems)
+    try {
+      await this.productRepository.delete(id);
+      return { message: `Product with id ${id} deleted successfully` };
+    } catch (err) {
+      console.error('Error deleting product:', err);
+      throw new InternalServerErrorException('Failed to delete product');
+    }
   }
 }

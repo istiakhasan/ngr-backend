@@ -121,4 +121,17 @@ export class CategoryService {
       return null;
     }
   }
+  async deleteCategory(id: number) {
+   console.log(id,"id")
+    const isExist = await this.categoryRepository.findOne({where:{id}})
+    console.log(isExist,"adafs");
+    if(!isExist){
+      throw new ApiError(HttpStatus.BAD_REQUEST,'Category not exist')
+    }
+
+     await this.categoryRepository.delete(id);
+
+     return isExist
+    
+  }
 }

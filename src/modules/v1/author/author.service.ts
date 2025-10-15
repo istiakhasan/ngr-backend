@@ -13,6 +13,7 @@ export class AuthorService {
 
   // ✅ Create new author
   async create(authorData: Partial<Author>): Promise<Author> {
+    console.log(authorData,"check");
     const author = this.authorRepository.create(authorData);
     return this.authorRepository.save(author);
   }

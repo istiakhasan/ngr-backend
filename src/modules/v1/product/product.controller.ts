@@ -160,4 +160,18 @@ export class ProductController {
       };
     });
   }
+  @Delete(':id')
+  async deleteProductByid(
+    @Param('id') id: string
+  ) {
+    return catchAsync(async () => {
+      const result =  await this.productService.deleteProductById(id);
+      return {
+        success: true,
+        message: 'Product delete  successfully',
+        statusCode: HttpStatus.OK,
+        data: result,
+      };
+    });
+  }
 }

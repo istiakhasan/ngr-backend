@@ -8,7 +8,8 @@ import {
   UploadedFiles,
   HttpStatus,
   Query,
-  Patch
+  Patch,
+  Delete
 } from '@nestjs/common';
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import { ZodPipe } from '../../../middleware/ZodPipe';
@@ -98,6 +99,19 @@ async getCategoryOptionsAndCount(@Query() query) {
         success: true,
         statusCode: HttpStatus.OK,
         message: 'Category update successfully',
+        data: result,
+      };
+    });
+  }
+  @Delete(':id')
+  async deleteCategory(@Param('id') id: number) {
+
+    return catchAsync(async ():Promise<IResponse<Category>> => {
+      const result = await this.categoryService.deleteCategory(id);
+      return {
+        success: true,
+        statusCode: HttpStatus.OK,
+        message: 'Category delete successfully',
         data: result,
       };
     });
