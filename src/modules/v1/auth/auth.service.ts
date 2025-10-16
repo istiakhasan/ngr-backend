@@ -25,7 +25,7 @@ export class AuthenTicationService {
     data: any,
   ): Promise<{ refreshToken: string; accessToken: string }> {
     const isUserExist = await this.usersRepository.findOne({
-      where: { email: data?.email },
+      where: { email: data?.userId },
       relations:['organization']
     });
     if (!isUserExist) {
