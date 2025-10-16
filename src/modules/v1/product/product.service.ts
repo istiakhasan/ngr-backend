@@ -19,6 +19,7 @@ export class ProductService {
   ) {}
 
   async createSimpleProduct(payload: any): Promise<Product> {
+    console.log(payload,"payload")
     return await this.productRepository.save(payload);
   }
 

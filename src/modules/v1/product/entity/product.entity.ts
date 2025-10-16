@@ -34,7 +34,7 @@ export class Product {
   })
   images: ProductImages[];
   @Column({ type: 'json', nullable: true })
-  readMOreImages: string[];
+  readMoreImages: string[];
 
   @OneToMany(() => Attribute, (attribute) => attribute.product, {
     cascade: true,
