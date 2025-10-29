@@ -22,6 +22,7 @@ import { DataSource } from 'typeorm';
 import { RequisitionService } from '../requsition/requsition.service';
 import axios from 'axios';
 import { DeliveryPartner } from '../delivery-partner/entities/delivery-partner.entity';
+import { CustomerService } from '../customers/customers.service';
 @Injectable()
 export class OrderService {
   constructor(
@@ -34,6 +35,7 @@ export class OrderService {
     private readonly statusRepository: Repository<OrderStatus>,
     @InjectRepository(Customers)
     private readonly customerRepository: Repository<Customers>,
+    private readonly customerService: CustomerService,
     @InjectRepository(Users)
     private readonly usersRepository: Repository<Users>,
     @InjectRepository(Products)
@@ -54,129 +56,164 @@ export class OrderService {
     private readonly requisitionService: RequisitionService,
   ) {}
 
-  async createOrder(payload: Order, organizationId: string) {
-    const {
-      customerId,
-      receiverPhoneNumber,
-      products,
-      discount = 0,
-      paymentHistory = [],
-      shippingCharge = 0,
-      ...rest
-    } = payload;
-  
-    if (!products || products.length === 0) {
-      throw new Error('Order must include at least one product');
+ async createOrder(payload: Order, organizationId: string) {
+  const {
+    customerId,
+    receiverPhoneNumber,
+    receiverName,
+    receiverDivision,
+    receiverDistrict,
+    receiverThana,
+    receiverAddress,
+    products,
+    discount = 0,
+    paymentHistory = [],
+    shippingCharge = 0,
+    ...rest
+  } = payload;
+
+  if (!products || products.length === 0) {
+    throw new Error('Order must include at least one product');
+  }
+
+  if (
+    !organizationId ||
+    !(await this.organizationRepository.findOne({ where: { id: organizationId } }))
+  ) {
+    throw new ApiError(HttpStatus.BAD_REQUEST, 'You are not authorized');
+  }
+
+  // 🟢 Step 1: Ensure Customer Exists (Create if not)
+  let finalCustomerId = customerId;
+
+  if (!finalCustomerId) {
+    if (!receiverPhoneNumber || !receiverName) {
+      throw new ApiError(HttpStatus.BAD_REQUEST, 'Receiver name and phone number are required');
     }
 
-    if (
-      !organizationId ||
-      !(await this.organizationRepository.findOne({
-        where: { id: organizationId },
-      }))
-    ) {
-      throw new ApiError(HttpStatus.BAD_REQUEST, 'You are not authorized ');
-    }
-
-    const orderNumber = generateUniqueOrderNumber();
-    const validatedProducts: any[] = [];
-    let productValue = 0;
-
-    for (const product of products) {
-      const existingProduct = await this.productRepository.findOne({
-        where: { id: product.productId },
-      });
-      if (!existingProduct) {
-        throw new NotFoundException(
-          `Product with ID ${product.productId} not found`,
-        );
-      }
-
-      const subtotal = product.productQuantity * existingProduct.salePrice;
-      productValue += subtotal;
-
-      validatedProducts.push({
-        productId: product.productId,
-        productQuantity: product.productQuantity,
-        productPrice: existingProduct.salePrice,
-        subtotal,
-      });
-    }
-    const totalPaidAmount = paymentHistory.reduce(
-      (total, payment) => total + Number(payment.paidAmount),
-      0,
-    );
-    const grandTotal = productValue + Number(shippingCharge) - Number(discount);
-    const totalReceivableAmount = grandTotal - totalPaidAmount;
-   
-    // generate invoice number
-    const lastOrder = await this.orderRepository
-      .createQueryBuilder('order')
-      .orderBy('order.createdAt', 'DESC')
-      .take(1)
-      .getOne();
-    const lastUserId = lastOrder?.invoiceNumber?.substring(3);
-    const currentId = lastUserId || (0).toString().padStart(4, '0');
-    let incrementedId = (parseInt(currentId) + 1).toString().padStart(4, '0');
-    incrementedId = `SO-${incrementedId}`;
-    const result = await this.orderRepository.save({
-      orderNumber,
-      paymentHistory: paymentHistory,
-      customerId,
-      receiverPhoneNumber,
-      products: validatedProducts,
-      currier: payload.currier,
-      orderSource: payload.orderSource,
-      shippingCharge,
-      totalPrice: grandTotal,
-      productValue,
-      totalPaidAmount,
-      totalReceiveAbleAmount: totalReceivableAmount,
-      discount,
-      invoiceNumber: incrementedId,
-      organizationId,
-      ...rest,
+    // check if a customer already exists with same phone
+    let existingCustomer = await this.customerRepository.findOne({
+      where: { customerPhoneNumber: receiverPhoneNumber },
     });
 
-    await this.orderLogsRepository.save({
-      orderId: result.id,
-      agentId: payload.agentId,
-      action: 'The Order created',
-      previousValue: null,
-    });
+    if (!existingCustomer) {
+      const newCustomerData = {
+        customerName: receiverName,
+        customerPhoneNumber: receiverPhoneNumber,
+        division: receiverDivision,
+        district: receiverDistrict,
+        thana: receiverThana,
+        address: receiverAddress,
+        customerType: 'NON_PROBASHI',
+      } as Customers;
 
-   if(rest?.statusId !==1){
-     for (const item of products) {
+      const newCustomer = await this.customerService.createCustomer(newCustomerData);
+      existingCustomer = newCustomer;
+    }
+
+    finalCustomerId = existingCustomer.customer_Id;
+  }
+
+  // 🟢 Step 2: Generate unique order number
+  const orderNumber = generateUniqueOrderNumber();
+  const validatedProducts: any[] = [];
+  let productValue = 0;
+
+  // 🟢 Step 3: Validate and calculate product totals
+  for (const product of products) {
+    const existingProduct = await this.productRepository.findOne({
+      where: { id: product.productId },
+    });
+    if (!existingProduct) {
+      throw new NotFoundException(`Product with ID ${product.productId} not found`);
+    }
+
+    const subtotal = product.productQuantity * existingProduct.salePrice;
+    productValue += subtotal;
+
+    validatedProducts.push({
+      productId: product.productId,
+      productQuantity: product.productQuantity,
+      productPrice: existingProduct.salePrice,
+      subtotal,
+    });
+  }
+
+  const totalPaidAmount = paymentHistory.reduce(
+    (total, payment) => total + Number(payment.paidAmount),
+    0,
+  );
+  const grandTotal = productValue + Number(shippingCharge) - Number(discount);
+  const totalReceivableAmount = grandTotal - totalPaidAmount;
+
+  // 🟢 Step 4: Generate invoice number
+  const lastOrder = await this.orderRepository
+    .createQueryBuilder('order')
+    .orderBy('order.createdAt', 'DESC')
+    .take(1)
+    .getOne();
+
+  const lastUserId = lastOrder?.invoiceNumber?.substring(3);
+  const currentId = lastUserId || (0).toString().padStart(4, '0');
+  let incrementedId = (parseInt(currentId) + 1).toString().padStart(4, '0');
+  incrementedId = `SO-${incrementedId}`;
+
+  // 🟢 Step 5: Save order
+  const result = await this.orderRepository.save({
+    orderNumber,
+    paymentHistory,
+    customerId: finalCustomerId,
+    receiverPhoneNumber,
+    receiverName,
+    receiverDivision,
+    receiverDistrict,
+    receiverThana,
+    receiverAddress,
+    currier: payload.currier,
+    orderSource: payload.orderSource,
+    shippingCharge,
+    totalPrice: grandTotal,
+    productValue,
+    totalPaidAmount,
+    totalReceiveAbleAmount: totalReceivableAmount,
+    discount,
+    invoiceNumber: incrementedId,
+    organizationId,
+    products: validatedProducts,
+    ...rest,
+  });
+
+  // 🟢 Step 6: Log creation
+  await this.orderLogsRepository.save({
+    orderId: result.id,
+    agentId: payload.agentId,
+    action: 'The Order created',
+    previousValue: null,
+  });
+
+  // 🟢 Step 7: Update inventory if not status 1
+  if (rest?.statusId !== 1) {
+    for (const item of products) {
       const { productId, productQuantity } = item;
-      const existingInventory = await this.inventoryRepository.findOne({
-        where: { productId },
-      });
+      const existingInventory = await this.inventoryRepository.findOne({ where: { productId } });
+
       if (!existingInventory?.orderQue) {
         await this.inventoryRepository.update({ productId }, { orderQue: 0 });
       }
-      await this.inventoryRepository.increment(
-        { productId },
-        'orderQue',
-        productQuantity,
-      );
+      await this.inventoryRepository.increment({ productId }, 'orderQue', productQuantity);
 
-      const existingInventoryItem =
-        await this.InventoryItemItemRepository.findOne({
-          where: { productId, locationId: rest?.locationId },
-        });
+      const existingInventoryItem = await this.InventoryItemItemRepository.findOne({
+        where: { productId, locationId: rest?.locationId },
+      });
 
-      //
       if (!existingInventoryItem) {
-        const newInventoryItems = await this.InventoryItemItemRepository.create(
-          {
-            locationId: rest?.locationId,
-            productId: productId,
-            quantity: 0,
-            orderQue: productQuantity,
-            inventoryId: existingInventory.id,
-          },
-        );
-
+        const newInventoryItems = this.InventoryItemItemRepository.create({
+          locationId: rest?.locationId,
+          productId,
+          quantity: 0,
+          orderQue: productQuantity,
+          inventoryId: existingInventory.id,
+        });
         await this.InventoryItemItemRepository.save(newInventoryItems);
       } else {
         if (!existingInventoryItem?.orderQue) {
@@ -185,7 +222,6 @@ export class OrderService {
             { orderQue: 0 },
           );
         }
-
         await this.InventoryItemItemRepository.increment(
           { productId, locationId: rest?.locationId },
           'orderQue',
@@ -193,9 +229,11 @@ export class OrderService {
         );
       }
     }
-   }
-    return result;
   }
+
+  return result;
+}
+
 
  async getOrders(options, filterOptions, organizationId) {
   const { page, limit, sortBy, sortOrder, skip } = paginationHelpers(options);
@@ -314,11 +352,11 @@ export class OrderService {
       }),
     ]);
 
-    // if (!customer) {
-    //   throw new NotFoundException(
-    //     `Customer with ID ${order.customerId} not found`,
-    //   );
-    // }
+    if (!customer) {
+      throw new NotFoundException(
+        `Customer with ID ${order.customerId} not found`,
+      );
+    }
 
     return {
       ...order,
